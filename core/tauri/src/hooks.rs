@@ -121,40 +121,26 @@ impl From<crate::Error> for InvokeError {
 
 /// Response from a [`InvokeMessage`] passed to the [`InvokeResolver`].
 #[derive(Debug)]
-pub enum InvokeResponse {
-  /// Resolve the promise.
-  Ok(JsonValue),
-  /// Reject the promise.
-  Err(InvokeError),
-}
+pub struct InvokeResponse(Result<JsonValue, InvokeError>);
 
 impl InvokeResponse {
   /// Turn a [`InvokeResponse`] back into a serializable result.
   #[inline(always)]
   pub fn into_result(self) -> Result<JsonValue, JsonValue> {
-    match self {
-      Self::Ok(v) => Ok(v),
-      Self::Err(e) => Err(e.0),
-    }
+    self.0.map_err(|e| e.0)
   }
 }
 
 impl<T: Serialize> From<Result<T, InvokeError>> for InvokeResponse {
   #[inline]
   fn from(result: Result<T, InvokeError>) -> Self {
-    match result {
-      Ok(ok) => match serde_json::to_value(ok) {
-        Ok(value) => Self::Ok(value),
-        Err(err) => Self::Err(InvokeError::from_serde_json(err)),
-      },
-      Err(err) => Self::Err(err),
-    }
+    Self(result.and_then(|ok| serde_json::to_value(ok).map_err(InvokeError::from_serde_json)))
   }
 }
 
 impl From<InvokeError> for InvokeResponse {
   fn from(error: InvokeError) -> Self {
-    Self::Err(error)
+    Self(Err(error))
   }
 }
 
@@ -193,7 +179,12 @@ impl<R: Runtime> InvokeResolver<R> {
     F: Future<Output = Result<JsonValue, InvokeError>> + Send + 'static,
   {
     crate::async_runtime::spawn(async move {
-      Self::return_result(self.window, task.await.into(), self.callback, self.error)
+      Self::return_result(
+        self.window,
+        InvokeResponse(task.await),
+        self.callback,
+        self.error,
+      )
     });
   }
 
@@ -211,7 +202,7 @@ impl<R: Runtime> InvokeResolver<R> {
   pub fn reject<T: Serialize>(self, value: T) {
     Self::return_result(
       self.window,
-      Result::<(), _>::Err(value.into()).into(),
+      InvokeResponse(Err(value.into())),
       self.callback,
       self.error,
     )
