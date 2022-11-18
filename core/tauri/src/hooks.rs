@@ -8,6 +8,7 @@ use crate::{
   Runtime, StateManager, Window,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::value::{to_raw_value, RawValue};
 use serde_json::Value as JsonValue;
 use serialize_to_javascript::{default_template, Template};
 use std::{future::Future, sync::Arc};
@@ -123,7 +124,7 @@ impl From<crate::Error> for InvokeError {
 #[derive(Debug)]
 pub enum InvokeResponse {
   /// Resolve the promise.
-  Ok(JsonValue),
+  Ok(Box<RawValue>),
   /// Reject the promise.
   Err(InvokeError),
 }
@@ -131,7 +132,7 @@ pub enum InvokeResponse {
 impl InvokeResponse {
   /// Turn a [`InvokeResponse`] back into a serializable result.
   #[inline(always)]
-  pub fn into_result(self) -> Result<JsonValue, JsonValue> {
+  pub fn into_result(self) -> Result<Box<RawValue>, JsonValue> {
     match self {
       Self::Ok(v) => Ok(v),
       Self::Err(e) => Err(e.0),
@@ -143,7 +144,7 @@ impl<T: Serialize> From<Result<T, InvokeError>> for InvokeResponse {
   #[inline]
   fn from(result: Result<T, InvokeError>) -> Self {
     match result {
-      Ok(ok) => match serde_json::to_value(ok) {
+      Ok(ok) => match to_raw_value(&ok) {
         Ok(value) => Self::Ok(value),
         Err(err) => Self::Err(InvokeError::from_serde_json(err)),
       },
@@ -190,7 +191,7 @@ impl<R: Runtime> InvokeResolver<R> {
   /// Reply to the invoke promise with an async task which is already serialized.
   pub fn respond_async_serialized<F>(self, task: F)
   where
-    F: Future<Output = Result<JsonValue, InvokeError>> + Send + 'static,
+    F: Future<Output = Result<Box<RawValue>, InvokeError>> + Send + 'static,
   {
     crate::async_runtime::spawn(async move {
       let response = match task.await {

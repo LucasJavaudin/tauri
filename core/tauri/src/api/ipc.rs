@@ -97,6 +97,40 @@ pub fn serialize_js_with<T: Serialize, F: FnOnce(&str) -> String>(
   Ok(return_val)
 }
 
+/// TODO: Doc
+pub fn serialize_js_with_for_raw_value<F: FnOnce(&str) -> String>(
+  raw: Box<RawValue>,
+  options: SerializeOptions,
+  cb: F,
+) -> crate::api::Result<String> {
+  // from here we know json.len() > 1 because an empty string is not a valid json value.
+  let json = raw.get();
+  let first = json.as_bytes()[0];
+
+  #[cfg(debug_assertions)]
+  if first == b'"' {
+    assert!(
+      json.len() < MAX_JSON_STR_LEN,
+      "passing a string larger than the max JavaScript literal string size"
+    )
+  }
+
+  let return_val = if json.len() > MIN_JSON_PARSE_LEN && (first == b'{' || first == b'[') {
+    let serialized = Serialized::new(&raw, &options).into_string();
+    // only use JSON.parse('{arg}') for arrays and objects less than the limit
+    // smaller literals do not benefit from being parsed from json
+    if serialized.len() < MAX_JSON_STR_LEN {
+      cb(&serialized)
+    } else {
+      cb(json)
+    }
+  } else {
+    cb(json)
+  };
+
+  Ok(return_val)
+}
+
 /// Transforms & escapes a JSON value.
 ///
 /// This is a convenience function for [`serialize_js_with`], simply allocating the result to a String.
@@ -185,6 +219,25 @@ pub fn format_callback<T: Serialize>(
   })
 }
 
+/// TODO: Doc
+pub fn format_callback_for_raw_value(
+  function_name: CallbackFn,
+  arg: Box<RawValue>,
+) -> crate::api::Result<String> {
+  serialize_js_with_for_raw_value(arg, Default::default(), |arg| {
+    format!(
+      r#"
+    if (window["_{fn}"]) {{
+      window["_{fn}"]({arg})
+    }} else {{
+      console.warn("[TAURI] Couldn't find callback id {fn} in window. This happens when the app is reloaded while Rust is running an asynchronous operation.")
+    }}"#,
+      fn = function_name.0,
+      arg = arg
+    )
+  })
+}
+
 /// Formats a Result type to its Promise response.
 /// Useful for Promises handling.
 /// If the Result `is_ok()`, the callback will be the `success_callback` function name and the argument will be the Ok value.
@@ -208,13 +261,13 @@ pub fn format_callback<T: Serialize>(
 /// assert!(cb.contains(r#"window["_1"]("error message here")"#));
 /// ```
 // TODO: better example to explain
-pub fn format_callback_result<T: Serialize, E: Serialize>(
-  result: Result<T, E>,
+pub fn format_callback_result<E: Serialize>(
+  result: Result<Box<RawValue>, E>,
   success_callback: CallbackFn,
   error_callback: CallbackFn,
 ) -> crate::api::Result<String> {
   match result {
-    Ok(res) => format_callback(success_callback, &res),
+    Ok(res) => format_callback_for_raw_value(success_callback, res),
     Err(err) => format_callback(error_callback, &err),
   }
 }

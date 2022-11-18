@@ -158,7 +158,7 @@ pub mod private {
   use crate::{InvokeError, InvokeResolver, Runtime};
   use futures_util::{FutureExt, TryFutureExt};
   use serde::Serialize;
-  use serde_json::Value;
+  use serde_json::value::{to_raw_value, RawValue};
   use std::future::Future;
 
   // ===== impl Serialize =====
@@ -190,11 +190,11 @@ pub mod private {
     }
 
     #[inline(always)]
-    pub fn future<T>(self, value: T) -> impl Future<Output = Result<Value, InvokeError>>
+    pub fn future<T>(self, value: T) -> impl Future<Output = Result<Box<RawValue>, InvokeError>>
     where
       T: Serialize,
     {
-      std::future::ready(serde_json::to_value(value).map_err(InvokeError::from_serde_json))
+      std::future::ready(to_raw_value(&value).map_err(InvokeError::from_serde_json))
     }
   }
 
@@ -231,7 +231,7 @@ pub mod private {
     pub fn future<T, E>(
       self,
       value: Result<T, E>,
-    ) -> impl Future<Output = Result<Value, InvokeError>>
+    ) -> impl Future<Output = Result<Box<RawValue>, InvokeError>>
     where
       T: Serialize,
       E: Into<InvokeError>,
@@ -239,7 +239,7 @@ pub mod private {
       std::future::ready(
         value
           .map_err(Into::into)
-          .and_then(|value| serde_json::to_value(value).map_err(InvokeError::from_serde_json)),
+          .and_then(|value| to_raw_value(&value).map_err(InvokeError::from_serde_json)),
       )
     }
   }
@@ -258,12 +258,12 @@ pub mod private {
 
   impl FutureTag {
     #[inline(always)]
-    pub fn future<T, F>(self, value: F) -> impl Future<Output = Result<Value, InvokeError>>
+    pub fn future<T, F>(self, value: F) -> impl Future<Output = Result<Box<RawValue>, InvokeError>>
     where
       T: Serialize,
       F: Future<Output = T> + Send + 'static,
     {
-      value.map(|value| serde_json::to_value(value).map_err(InvokeError::from_serde_json))
+      value.map(|value| to_raw_value(&value).map_err(InvokeError::from_serde_json))
     }
   }
 
@@ -282,14 +282,17 @@ pub mod private {
 
   impl ResultFutureTag {
     #[inline(always)]
-    pub fn future<T, E, F>(self, value: F) -> impl Future<Output = Result<Value, InvokeError>>
+    pub fn future<T, E, F>(
+      self,
+      value: F,
+    ) -> impl Future<Output = Result<Box<RawValue>, InvokeError>>
     where
       T: Serialize,
       E: Into<InvokeError>,
       F: Future<Output = Result<T, E>> + Send,
     {
       value.err_into().map(|result| {
-        result.and_then(|value| serde_json::to_value(value).map_err(InvokeError::from_serde_json))
+        result.and_then(|value| to_raw_value(&value).map_err(InvokeError::from_serde_json))
       })
     }
   }
